@@ -97,6 +97,7 @@ class MQTTService {
     const topics = [
       config.mqtt.topics.sensorData,
       config.mqtt.topics.gatewayData,
+      config.mqtt.topics.loraGatewayData,
       config.mqtt.topics.otaResponse,
     ];
 
@@ -132,6 +133,8 @@ class MQTTService {
         await this.handleSensorData(payload);
       } else if (topic.startsWith('BLEGatewayData')) {
         await this.handleGatewayData(payload);
+      } else if (topic.startsWith('LoRaGatewayData')) {
+        await this.handleLoRaGatewayData(payload);
       } else if (topic.startsWith('OTA')) {
         await this.handleOTAResponse(payload);
       }
@@ -218,6 +221,91 @@ class MQTTService {
 
     } catch (error) {
       logger.error(`Error handling sensor data for ${device_id}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle LoRa gateway data (uses node_id as mac)
+   */
+  async handleLoRaGatewayData(payload) {
+    const { gateway_id, node_id, pm1_0, pm2_5, pm10, voc, co2, temperature, humidity, rssi_wifi, aqi, aqi_category, source } = payload;
+
+    if (!gateway_id || !node_id) {
+      logger.warn('LoRa gateway data missing gateway_id or node_id:', payload);
+      return;
+    }
+
+    // Use node_id as the MAC address for LoRa nodes
+    const mac = node_id;
+
+    try {
+      // Check if gateway exists, create if not (auto-registration)
+      let gateway = await dbService.getGatewayById(gateway_id);
+      
+      if (!gateway) {
+        logger.mqtt(`Auto-registering new LoRa gateway: ${gateway_id}`);
+        await dbService.insertGateway(gateway_id, gateway_id, 'active');
+        
+        await dbService.insertLog(
+          'gateway',
+          `New LoRa gateway auto-registered: ${gateway_id}`,
+          null,
+          gateway_id
+        );
+      } else {
+        // Update gateway status to online
+        await dbService.updateGatewayStatus(gateway_id, 'active');
+      }
+
+      // Check if node exists, create or update
+      let node = await dbService.getNodeByMac(mac);
+      
+      if (!node) {
+        logger.mqtt(`Auto-registering new LoRa node: ${node_id}`);
+        await dbService.insertNode(gateway_id, mac, `LoRa_${node_id}`, rssi_wifi || 0);
+      } else {
+        // Update node with latest RSSI
+        await dbService.updateNodeStatus(mac, gateway_id, rssi_wifi || node.rssi);
+      }
+
+      // Prepare sensor data object with all LoRa-specific fields
+      const sensorData = {};
+      if (pm1_0 !== undefined) sensorData.pm1_0 = pm1_0;
+      if (pm2_5 !== undefined) sensorData.pm2_5 = pm2_5;
+      if (pm10 !== undefined) sensorData.pm10 = pm10;
+      if (voc !== undefined) sensorData.voc = voc;
+      if (co2 !== undefined) sensorData.co2 = co2;
+      if (temperature !== undefined) sensorData.temperature = temperature;
+      if (humidity !== undefined) sensorData.humidity = humidity;
+      if (rssi_wifi !== undefined) sensorData.rssi_wifi = rssi_wifi;
+      if (aqi !== undefined) sensorData.aqi = aqi;
+      if (aqi_category !== undefined) sensorData.aqi_category = aqi_category;
+      if (source !== undefined) sensorData.source = source;
+
+      // Insert sensor data
+      if (Object.keys(sensorData).length > 0) {
+        await dbService.insertSensorData(
+          mac,           // source_id (node_id)
+          'node',        // source_type
+          gateway_id,    // gateway_id
+          sensorData,    // data object
+          new Date()     // timestamp
+        );
+      }
+
+      // Log sensor data received
+      await dbService.insertLog(
+        'mqtt',
+        `LoRa sensor data received from node ${node_id} via ${gateway_id}`,
+        JSON.stringify({ pm1_0, pm2_5, pm10, voc, co2, temperature, humidity, aqi }),
+        mac
+      );
+
+      logger.mqtt(`LoRa gateway data stored: ${gateway_id} -> ${node_id}`);
+
+    } catch (error) {
+      logger.error(`Error handling LoRa gateway data for ${gateway_id}:`, error);
       throw error;
     }
   }

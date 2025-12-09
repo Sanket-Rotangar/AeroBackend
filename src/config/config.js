@@ -24,6 +24,7 @@ const config = {
     topics: {
       sensorData: 'SensorData/#',
       gatewayData: 'BLEGatewayData/#',
+      loraGatewayData: 'LoRaGatewayData/#',
       commandRequest: 'CommandRequest',
       otaUpdate: 'OTA/+/update',
       otaResponse: 'OTA/+/response',
