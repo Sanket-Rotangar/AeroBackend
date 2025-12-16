@@ -230,8 +230,7 @@ class MQTTService {
    * Supports both Air Quality and Wildlife Detection data
    */
   async handleLoRaGatewayData(payload) {
-    const { type, gateway_id, node_id, pm1_0, pm2_5, pm10, voc, co2, temperature, humidity, rssi_wifi, aqi, aqi_category, source, 
-            elephant_confidence, gun_confidence, chainsaw_confidence, vehicle_confidence } = payload;
+    const { type, gateway_id, node_id } = payload;
 
     if (!gateway_id || !node_id) {
       logger.warn('LoRa gateway data missing gateway_id or node_id:', payload);
@@ -267,45 +266,34 @@ class MQTTService {
       if (!node) {
         const nodeName = dataType === 'wildlife' ? `Wildlife_${node_id}` : `AirQuality_${node_id}`;
         logger.mqtt(`Auto-registering new LoRa node: ${nodeName}`);
-        await dbService.insertNode(gateway_id, mac, nodeName, rssi_wifi || 0);
+        await dbService.insertNode(gateway_id, mac, nodeName, payload.rssi_wifi || 0);
       } else {
         // Update node with latest RSSI
-        await dbService.updateNodeStatus(mac, gateway_id, rssi_wifi || node.rssi);
+        await dbService.updateNodeStatus(mac, gateway_id, payload.rssi_wifi || node.rssi);
       }
 
-      // Prepare sensor data object based on message type
-      const sensorData = { type: dataType };
+      // Prepare sensor data object - store ALL fields from payload
+      const sensorData = {};
 
-      if (dataType === 'wildlife') {
-        // Wildlife detection data
-        if (elephant_confidence !== undefined) sensorData.elephant_confidence = elephant_confidence;
-        if (gun_confidence !== undefined) sensorData.gun_confidence = gun_confidence;
-        if (chainsaw_confidence !== undefined) sensorData.chainsaw_confidence = chainsaw_confidence;
-        if (vehicle_confidence !== undefined) sensorData.vehicle_confidence = vehicle_confidence;
-        if (rssi_wifi !== undefined) sensorData.rssi_wifi = rssi_wifi;
-        if (source !== undefined) sensorData.source = source;
-      } else {
-        // Air quality data
-        if (pm1_0 !== undefined) sensorData.pm1_0 = pm1_0;
-        if (pm2_5 !== undefined) sensorData.pm2_5 = pm2_5;
-        if (pm10 !== undefined) sensorData.pm10 = pm10;
-        if (voc !== undefined) sensorData.voc = voc;
-        if (co2 !== undefined) sensorData.co2 = co2;
-        if (temperature !== undefined) sensorData.temperature = temperature;
-        if (humidity !== undefined) sensorData.humidity = humidity;
-        if (rssi_wifi !== undefined) sensorData.rssi_wifi = rssi_wifi;
-        if (aqi !== undefined) sensorData.aqi = aqi;
-        if (aqi_category !== undefined) sensorData.aqi_category = aqi_category;
-        if (source !== undefined) sensorData.source = source;
+      // Copy all fields from payload except gateway_id and node_id (already stored separately)
+      Object.keys(payload).forEach(key => {
+        if (key !== 'gateway_id' && key !== 'node_id') {
+          sensorData[key] = payload[key];
+        }
+      });
+
+      // Ensure type field is set
+      if (!sensorData.type) {
+        sensorData.type = dataType;
       }
 
       // Insert sensor data
-      if (Object.keys(sensorData).length > 1) { // More than just 'type' field
+      if (Object.keys(sensorData).length > 0) {
         await dbService.insertSensorData(
           mac,           // source_id (node_id)
           'node',        // source_type
           gateway_id,    // gateway_id
-          sensorData,    // data object
+          sensorData,    // data object (all fields preserved)
           new Date()     // timestamp
         );
       }
@@ -318,6 +306,11 @@ class MQTTService {
       await dbService.insertLog(
         'mqtt',
         logMessage,
+        JSON.stringify(sensorData),
+        mac
+      );
+
+      logger.mqtt(`LoRa ${dataType} data stored: ${gateway_id} -> ${node_id}`);
         JSON.stringify(sensorData),
         mac
       );
