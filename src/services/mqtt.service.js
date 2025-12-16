@@ -279,13 +279,6 @@ class MQTTService {
       delete sensorData.gateway_id;
       delete sensorData.node_id;
 
-      // Prepare sensor data object - store ALL fields from payload
-      const sensorData = { ...payload };
-      
-      // Remove gateway_id and node_id as they're stored separately
-      delete sensorData.gateway_id;
-      delete sensorData.node_id;
-
       // Insert sensor data
       if (Object.keys(sensorData).length > 0) {
         await dbService.insertSensorData(
