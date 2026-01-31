@@ -14,15 +14,16 @@ const SystemLogs = () => {
   useEffect(() => {
     fetchLogs();
 
-    const interval = autoRefresh
-      ? setInterval(() => {
-          fetchLogs();
-        }, 10000)
-      : null;
+    let interval = null;
+    if (autoRefresh) {
+      interval = setInterval(() => {
+        fetchLogs();
+      }, 10000);
+    }
 
     // Listen for real-time log updates
     const handleLogUpdate = (data) => {
-      setLogs((prev) => [data, ...prev].slice(0, 100));
+      setLogs((prev) => [data, ...prev].slice(0, 1000));
     };
 
     wsService.on('logs', handleLogUpdate);
@@ -31,15 +32,30 @@ const SystemLogs = () => {
       if (interval) clearInterval(interval);
       wsService.off('logs', handleLogUpdate);
     };
-  }, [autoRefresh]);
+  }, [autoRefresh]); // Only re-run when autoRefresh changes
 
   const fetchLogs = async () => {
     try {
-      // Fetch all logs without limit
-      const response = await logsAPI.getAll({ limit: 0 });
-      setLogs(response.data.data || []);
+      console.log('🔍 Fetching logs from API...');
+      setLoading(true);
+      // Fetch only 100 latest logs to prevent memory issues
+      const response = await logsAPI.getAll({ limit: 100 });
+      console.log('✅ API Response:', {
+        success: response.data.success,
+        count: response.data.count,
+        dataLength: response.data.data?.length
+      });
+      
+      if (response.data.data && Array.isArray(response.data.data)) {
+        setLogs(response.data.data);
+        console.log(`✅ Set ${response.data.data.length} logs`);
+      } else {
+        console.warn('⚠️ No data array in response');
+        setLogs([]);
+      }
     } catch (error) {
-      console.error('Error fetching logs:', error);
+      console.error('❌ Error fetching logs:', error.response?.data || error.message);
+      setLogs([]);
     } finally {
       setLoading(false);
     }
@@ -255,32 +271,6 @@ const SystemLogs = () => {
               </p>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="card">
-          <p className="text-slate-400 text-sm">Total Logs</p>
-          <p className="text-2xl font-bold text-white mt-1">{logs.length}</p>
-        </div>
-        <div className="card">
-          <p className="text-slate-400 text-sm">Errors</p>
-          <p className="text-2xl font-bold text-red-500 mt-1">
-            {logs.filter((l) => (l.level || 'info') === 'error').length}
-          </p>
-        </div>
-        <div className="card">
-          <p className="text-slate-400 text-sm">Warnings</p>
-          <p className="text-2xl font-bold text-yellow-500 mt-1">
-            {logs.filter((l) => (l.level || 'info') === 'warn').length}
-          </p>
-        </div>
-        <div className="card">
-          <p className="text-slate-400 text-sm">Info</p>
-          <p className="text-2xl font-bold text-blue-500 mt-1">
-            {logs.filter((l) => (l.level || 'info') === 'info').length}
-          </p>
         </div>
       </div>
     </div>

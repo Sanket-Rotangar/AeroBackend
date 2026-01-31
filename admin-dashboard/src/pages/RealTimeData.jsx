@@ -19,8 +19,8 @@ const RealTimeData = () => {
   const fetchInitialData = async () => {
     try {
       setLoading(true);
-      // Fetch all sensor data without limit
-      const response = await sensorDataAPI.getRecent({ limit: 0 });
+      // Fetch recent 1000 sensor readings
+      const response = await sensorDataAPI.getRecent({ limit: 1000 });
       const data = response.data.data || [];
       const formattedData = data.map((item) => ({
         ...item,

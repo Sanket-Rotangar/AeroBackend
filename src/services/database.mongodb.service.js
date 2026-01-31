@@ -36,6 +36,7 @@ class MongoDBService {
         commands: this.db.collection('commands'),
         otaUpdates: this.db.collection('ota_updates'),
         systemLogs: this.db.collection('system_logs'),
+        logs: this.db.collection('system_logs'), // Alias for systemLogs
       };
 
       await this.createIndexes();
@@ -466,22 +467,20 @@ class MongoDBService {
   }
 
   async getAllLogs(limit = 100, offset = 0) {
-    const query = this.collections.logs
+    // Always enforce a limit to prevent memory issues
+    const safeLimit = Math.min(Math.max(limit || 100, 1), 10000);
+    
+    return await this.collections.logs
       .find({})
       .sort({ timestamp: -1 })
-      .skip(offset);
-    
-    // If limit is null or 0, don't apply limit (fetch all)
-    if (limit && limit > 0) {
-      query.limit(limit);
-    }
-    
-    return await query.toArray();
+      .skip(offset)
+      .limit(safeLimit)
+      .toArray();
   }
 
   async getRecentLogs(minutes = 60, limit = 100) {
     const cutoffTime = new Date(Date.now() - minutes * 60 * 1000);
-    return await this.collections.systemLogs
+    return await this.collections.logs
       .find({ timestamp: { $gte: cutoffTime } })
       .sort({ timestamp: -1 })
       .limit(limit)

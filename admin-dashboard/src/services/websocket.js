@@ -9,9 +9,15 @@
   }
 
   connect(token) {
-    const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';
-    const wsUrl = `${WS_URL}/ws?token=${token}`;
+    // Determine WebSocket protocol based on current page protocol
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const WS_URL = import.meta.env.VITE_WS_URL || `${protocol}//${window.location.host}`;
+    
+    // Clean up the URL if it already has protocol
+    const cleanUrl = WS_URL.replace(/^(ws|wss):\/\//, '');
+    const wsUrl = `${protocol}//${cleanUrl}/ws?token=${token}`;
 
+    console.log('Connecting to WebSocket:', wsUrl);
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
@@ -45,9 +51,13 @@
     };
 
     this.ws.onclose = () => {
+      console.log('WebSocket closed');
       if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
         this.reconnectAttempts++;
+        console.log(`WebSocket reconnecting... attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
         setTimeout(() => this.connect(token), this.reconnectInterval);
+      } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.error('WebSocket max reconnect attempts reached');
       }
     };
   }

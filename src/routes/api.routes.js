@@ -588,12 +588,12 @@ router.get('/logs',
   validateDateRange,
   async (req, res) => {
     try {
-      const { category, limit = 0, offset = 0, start_date, end_date } = req.query;
+      const { category, limit = 100, offset = 0, start_date, end_date } = req.query;
       const parsedLimit = parseInt(limit);
       const parsedOffset = parseInt(offset);
       
-      // Allow unlimited data export when limit is 0
-      const finalLimit = parsedLimit === 0 ? null : parsedLimit;
+      // Set reasonable max limit to prevent server overload (max 1000 records)
+      const finalLimit = Math.min(Math.max(parsedLimit, 1), 1000);
 
       let logs;
       if (category) {
@@ -605,6 +605,8 @@ router.get('/logs',
       res.json({
         success: true,
         count: logs.length,
+        limit: finalLimit,
+        offset: parsedOffset,
         data: logs,
       });
     } catch (error) {
