@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { logsAPI } from '../services/api';
 import wsService from '../services/websocket';
-import { FileText, Search, Filter, RefreshCw, AlertCircle, Info, AlertTriangle, Bug } from 'lucide-react';
+import { FileText, Search, Filter, RefreshCw, AlertCircle, Info, AlertTriangle, Bug, Download } from 'lucide-react';
 
 const SystemLogs = () => {
   const [logs, setLogs] = useState([]);
@@ -35,13 +35,43 @@ const SystemLogs = () => {
 
   const fetchLogs = async () => {
     try {
-      const response = await logsAPI.getAll({ limit: 100 });
+      // Fetch all logs without limit
+      const response = await logsAPI.getAll({ limit: 0 });
       setLogs(response.data.data || []);
     } catch (error) {
       console.error('Error fetching logs:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const exportToCSV = () => {
+    if (filteredLogs.length === 0) return;
+
+    const headers = ['Timestamp', 'Level', 'Category', 'Message', 'Source ID', 'Details'];
+    const csvRows = [
+      headers.join(','),
+      ...filteredLogs.map(log => {
+        const row = [
+          `"${log.timestamp ? new Date(log.timestamp).toLocaleString() : ''}"`,
+          `"${log.level || 'info'}"`,
+          `"${log.category || ''}"`,
+          `"${(log.message || '').replace(/"/g, '""')}"`,
+          `"${log.source_id || 'N/A'}"`,
+          `"${typeof log.details === 'object' ? JSON.stringify(log.details).replace(/"/g, '""') : (log.details || '')}"`
+        ];
+        return row.join(',');
+      })
+    ];
+
+    const csvContent = csvRows.join('\n');
+    const dataUri = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent);
+    const exportFileDefaultName = `system-logs-${new Date().toISOString().split('T')[0]}.csv`;
+
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
   };
 
   const filteredLogs = logs.filter((log) => {
@@ -104,6 +134,10 @@ const SystemLogs = () => {
           <p className="text-slate-400 mt-1">Monitor system events and errors</p>
         </div>
         <div className="flex gap-3">
+          <button onClick={exportToCSV} className="btn-secondary flex items-center gap-2" disabled={filteredLogs.length === 0}>
+            <Download className="h-4 w-4" />
+            Export CSV
+          </button>
           <button
             onClick={() => setAutoRefresh(!autoRefresh)}
             className={`btn-secondary flex items-center gap-2 ${

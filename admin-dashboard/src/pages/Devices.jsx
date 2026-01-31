@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { devicesAPI } from '../services/api';
 import wsService from '../services/websocket';
-import { Cpu, Plus, Search, Edit2, Trash2, Eye, RefreshCw } from 'lucide-react';
+import { Cpu, Plus, Search, Edit2, Trash2, Eye, RefreshCw, Download } from 'lucide-react';
 
 const Devices = () => {
   const [devices, setDevices] = useState([]);
@@ -35,13 +35,44 @@ const Devices = () => {
 
   const fetchDevices = async () => {
     try {
-      const response = await devicesAPI.getAll({ limit: 100 });
+      // Fetch all devices without limit
+      const response = await devicesAPI.getAll({ limit: 0 });
       setDevices(response.data.data || []);
     } catch (error) {
       console.error('Error fetching devices:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const exportToCSV = () => {
+    if (filteredDevices.length === 0) return;
+
+    const headers = ['Device ID', 'Device Name', 'Type', 'Location', 'Status', 'Firmware Version', 'Last Seen'];
+    const csvRows = [
+      headers.join(','),
+      ...filteredDevices.map(device => {
+        const row = [
+          `"${device.device_id || ''}"`,
+          `"${device.device_name || ''}"`,
+          `"${device.device_type || ''}"`,
+          `"${device.location || 'N/A'}"`,
+          `"${device.status || 'unknown'}"`,
+          `"${device.firmware_version || 'N/A'}"`,
+          `"${device.last_seen ? new Date(device.last_seen).toLocaleString() : 'Never'}"`
+        ];
+        return row.join(',');
+      })
+    ];
+
+    const csvContent = csvRows.join('\n');
+    const dataUri = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent);
+    const exportFileDefaultName = `devices-${new Date().toISOString().split('T')[0]}.csv`;
+
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
   };
 
   const handleCreate = () => {
@@ -137,6 +168,10 @@ const Devices = () => {
           <p className="text-slate-400 mt-1">Manage your IoT devices</p>
         </div>
         <div className="flex gap-3">
+          <button onClick={exportToCSV} className="btn-secondary flex items-center gap-2" disabled={filteredDevices.length === 0}>
+            <Download className="h-4 w-4" />
+            Export CSV
+          </button>
           <button onClick={fetchDevices} className="btn-secondary flex items-center gap-2">
             <RefreshCw className="h-4 w-4" />
             Refresh

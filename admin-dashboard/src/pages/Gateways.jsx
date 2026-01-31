@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { gatewaysAPI } from '../services/api';
 import wsService from '../services/websocket';
-import { Radio, Plus, Search, Eye, RefreshCw, Wifi } from 'lucide-react';
+import { Radio, Plus, Search, Eye, RefreshCw, Wifi, Download } from 'lucide-react';
 
 const Gateways = () => {
   const [gateways, setGateways] = useState([]);
@@ -27,7 +27,8 @@ const Gateways = () => {
 
   const fetchGateways = async () => {
     try {
-      const response = await gatewaysAPI.getAll({ limit: 100 });
+      // Fetch all gateways without limit
+      const response = await gatewaysAPI.getAll({ limit: 0 });
       setGateways(response.data.data || []);
     } catch (error) {
       console.error('Error fetching gateways:', error);
@@ -38,7 +39,8 @@ const Gateways = () => {
 
   const fetchNodes = async (gatewayId) => {
     try {
-      const response = await gatewaysAPI.getNodes(gatewayId, { limit: 100 });
+      // Fetch all nodes without limit
+      const response = await gatewaysAPI.getNodes(gatewayId, { limit: 0 });
       setNodes(response.data.data || []);
     } catch (error) {
       console.error('Error fetching nodes:', error);
@@ -49,6 +51,34 @@ const Gateways = () => {
     setSelectedGateway(gateway);
     await fetchNodes(gateway.gateway_id);
     setShowNodesModal(true);
+  };
+
+  const exportToCSV = () => {
+    if (filteredGateways.length === 0) return;
+
+    const headers = ['Gateway ID', 'Gateway Name', 'Status', 'Node Count', 'Last Seen'];
+    const csvRows = [
+      headers.join(','),
+      ...filteredGateways.map(gateway => {
+        const row = [
+          `"${gateway.gateway_id || ''}"`,
+          `"${gateway.gateway_name || ''}"`,
+          `"${gateway.status || 'unknown'}"`,
+          `"${gateway.node_count || 0}"`,
+          `"${gateway.last_seen ? new Date(gateway.last_seen).toLocaleString() : 'N/A'}"`
+        ];
+        return row.join(',');
+      })
+    ];
+
+    const csvContent = csvRows.join('\n');
+    const dataUri = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent);
+    const exportFileDefaultName = `gateways-${new Date().toISOString().split('T')[0]}.csv`;
+
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
   };
 
   const filteredGateways = gateways.filter(
@@ -87,10 +117,16 @@ const Gateways = () => {
           <h1 className="text-3xl font-bold text-white">Gateways & Nodes</h1>
           <p className="text-slate-400 mt-1">Monitor BLE/LoRa gateway and node devices</p>
         </div>
-        <button onClick={fetchGateways} className="btn-secondary flex items-center gap-2">
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </button>
+        <div className="flex gap-3">
+          <button onClick={exportToCSV} className="btn-secondary flex items-center gap-2" disabled={filteredGateways.length === 0}>
+            <Download className="h-4 w-4" />
+            Export CSV
+          </button>
+          <button onClick={fetchGateways} className="btn-secondary flex items-center gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Search */}

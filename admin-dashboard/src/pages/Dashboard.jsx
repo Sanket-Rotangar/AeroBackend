@@ -56,8 +56,8 @@ const Dashboard = () => {
   const fetchDashboardData = async () => {
     try {
       const [devicesRes, gatewaysRes] = await Promise.all([
-        devicesAPI.getAll({ limit: 100 }),
-        gatewaysAPI.getAll({ limit: 100 }),
+        devicesAPI.getAll({ limit: 0 }), // Fetch all devices
+        gatewaysAPI.getAll({ limit: 0 }), // Fetch all gateways
       ]);
 
       const devices = devicesRes.data.data || [];

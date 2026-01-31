@@ -19,7 +19,8 @@ const RealTimeData = () => {
   const fetchInitialData = async () => {
     try {
       setLoading(true);
-      const response = await sensorDataAPI.getRecent({ limit: 100 });
+      // Fetch all sensor data without limit
+      const response = await sensorDataAPI.getRecent({ limit: 0 });
       const data = response.data.data || [];
       const formattedData = data.map((item) => ({
         ...item,
@@ -144,6 +145,43 @@ const RealTimeData = () => {
     linkElement.click();
   };
 
+  const exportToCSV = () => {
+    if (filteredData.length === 0) return;
+
+    // Define CSV headers
+    const headers = [
+      'Timestamp',
+      'Source ID',
+      'Source Type',
+      'Gateway ID',
+      'Data'
+    ];
+
+    // Convert data to CSV rows
+    const csvRows = [
+      headers.join(','), // Header row
+      ...filteredData.map(item => {
+        const row = [
+          `"${item.fullTimestamp || item.timestamp}"`,
+          `"${item.source_id || ''}"`,
+          `"${item.source_type || ''}"`,
+          `"${item.gateway_id || 'N/A'}"`,
+          `"${typeof item.data === 'object' ? JSON.stringify(item.data).replace(/"/g, '""') : item.data}"`
+        ];
+        return row.join(',');
+      })
+    ];
+
+    const csvContent = csvRows.join('\n');
+    const dataUri = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent);
+    const exportFileDefaultName = `sensor-data-${new Date().toISOString().split('T')[0]}.csv`;
+
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+  };
+
   const clearFilters = () => {
     setSourceType('all');
     setSelectedDevice('all');
@@ -159,16 +197,26 @@ const RealTimeData = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">Real-Time Data Visualization</h1>
-          <p className="text-slate-400 mt-1">Monitor live sensor data from your devices in JSON format</p>
+          <p className="text-slate-400 mt-1">Monitor live sensor data from your devices</p>
         </div>
-        <button
-          onClick={exportToJSON}
-          className="btn-primary flex items-center gap-2"
-          disabled={filteredData.length === 0}
-        >
-          <Download className="h-4 w-4" />
-          Export JSON
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={exportToCSV}
+            className="btn-secondary flex items-center gap-2"
+            disabled={filteredData.length === 0}
+          >
+            <Download className="h-4 w-4" />
+            Export CSV
+          </button>
+          <button
+            onClick={exportToJSON}
+            className="btn-primary flex items-center gap-2"
+            disabled={filteredData.length === 0}
+          >
+            <Download className="h-4 w-4" />
+            Export JSON
+          </button>
+        </div>
       </div>
 
       {/* Advanced Filters */}

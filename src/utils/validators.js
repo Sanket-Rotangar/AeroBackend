@@ -64,7 +64,7 @@ const validateOTA = [
 
 // Query parameter validation
 const validatePagination = [
-  query('limit').optional().isInt({ min: 1, max: 1000 }).withMessage('Limit must be between 1 and 1000'),
+  query('limit').optional().isInt({ min: 0, max: 10000 }).withMessage('Limit must be between 0 and 10000 (0 = unlimited)'),
   query('offset').optional().isInt({ min: 0 }).withMessage('Offset must be non-negative'),
   handleValidationErrors,
 ];

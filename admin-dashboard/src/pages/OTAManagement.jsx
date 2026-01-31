@@ -26,7 +26,7 @@ const OTAManagement = () => {
   const fetchData = async () => {
     try {
       const [devicesRes, firmwareRes, historyRes] = await Promise.all([
-        devicesAPI.getAll({ limit: 100 }),
+        devicesAPI.getAll({ limit: 0 }), // Fetch all devices
         otaAPI.getFirmware({ limit: 50 }),
         otaAPI.getHistory({ limit: 50 }),
       ]);

@@ -408,8 +408,16 @@ router.get('/nodes/:mac/data',
  */
 router.get('/sensor-data', authService.protect, async (req, res) => {
   try {
-    const { limit = 50 } = req.query;
-    const data = await dbService.getAllSensorData(parseInt(limit));
+    // Allow unlimited data export for admin users
+    const { limit = 0, offset = 0 } = req.query;
+    const parsedLimit = parseInt(limit);
+    const parsedOffset = parseInt(offset);
+    
+    const data = await dbService.getAllSensorData(
+      parsedLimit === 0 ? null : parsedLimit, 
+      parsedOffset
+    );
+    
     res.json({
       success: true,
       count: data.length,
@@ -580,13 +588,18 @@ router.get('/logs',
   validateDateRange,
   async (req, res) => {
     try {
-      const { category, limit = 100, offset = 0, start_date, end_date } = req.query;
+      const { category, limit = 0, offset = 0, start_date, end_date } = req.query;
+      const parsedLimit = parseInt(limit);
+      const parsedOffset = parseInt(offset);
+      
+      // Allow unlimited data export when limit is 0
+      const finalLimit = parsedLimit === 0 ? null : parsedLimit;
 
       let logs;
       if (category) {
-        logs = await dbService.getLogsByCategory(category, parseInt(limit), parseInt(offset));
+        logs = await dbService.getLogsByCategory(category, finalLimit, parsedOffset);
       } else {
-        logs = await dbService.getAllLogs(parseInt(limit), parseInt(offset));
+        logs = await dbService.getAllLogs(finalLimit, parsedOffset);
       }
 
       res.json({

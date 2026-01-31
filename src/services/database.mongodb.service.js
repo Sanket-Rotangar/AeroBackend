@@ -319,12 +319,17 @@ class MongoDBService {
   }
 
   async getAllSensorData(limit = 100, offset = 0) {
-    return await this.collections.sensorData
+    const query = this.collections.sensorData
       .find({})
       .sort({ timestamp: -1 })
-      .skip(offset)
-      .limit(limit)
-      .toArray();
+      .skip(offset);
+    
+    // If limit is null or 0, don't apply limit (fetch all)
+    if (limit && limit > 0) {
+      query.limit(limit);
+    }
+    
+    return await query.toArray();
   }
 
   async getRecentSensorData(minutes = 60, limit = 100) {
@@ -447,21 +452,31 @@ class MongoDBService {
   }
 
   async getLogsByCategory(category, limit = 100, offset = 0) {
-    return await this.collections.systemLogs
+    const query = this.collections.logs
       .find({ category })
       .sort({ timestamp: -1 })
-      .skip(offset)
-      .limit(limit)
-      .toArray();
+      .skip(offset);
+    
+    // If limit is null or 0, don't apply limit (fetch all)
+    if (limit && limit > 0) {
+      query.limit(limit);
+    }
+    
+    return await query.toArray();
   }
 
   async getAllLogs(limit = 100, offset = 0) {
-    return await this.collections.systemLogs
+    const query = this.collections.logs
       .find({})
       .sort({ timestamp: -1 })
-      .skip(offset)
-      .limit(limit)
-      .toArray();
+      .skip(offset);
+    
+    // If limit is null or 0, don't apply limit (fetch all)
+    if (limit && limit > 0) {
+      query.limit(limit);
+    }
+    
+    return await query.toArray();
   }
 
   async getRecentLogs(minutes = 60, limit = 100) {
