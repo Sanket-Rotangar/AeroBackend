@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "seed-admin": "node scripts/seedAdmin.js",
-    "test": "node test-api.js",
+    "test": "node scripts/test-api.js",
     "start-all": "powershell -ExecutionPolicy Bypass -File ./start.ps1",
     "dashboard": "cd admin-dashboard && npm run dev",
     "both": "concurrently \"npm start\" \"npm run dashboard\""

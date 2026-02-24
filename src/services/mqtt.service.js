@@ -1,19 +1,31 @@
 /**
- * BlazeIoT Solutions - MQTT Service
- * Manages connection to HiveMQ Cloud broker and message processing
+ * BlazeIoT Solutions — MQTT Service
+ *
+ * Responsibilities:
+ *   1. Manage connection lifecycle with the HiveMQ Cloud broker
+ *   2. Subscribe to topics on connect
+ *   3. Route incoming messages to the correct handler
+ *   4. Publish outbound messages (commands, OTA triggers)
+ *
+ * Each message type is handled by a dedicated file in src/mqtt/handlers/.
+ * This keeps this file focused on infrastructure, not business logic.
  */
 
 const mqtt = require('mqtt');
 const config = require('../config/config');
 const dbService = require('./database.service');
 const logger = require('../utils/logger');
-const { isValidJSON, sanitizeString } = require('../utils/validators');
+const { isValidJSON } = require('../utils/validators');
+
+// All message handlers live in a single file — src/mqtt/handlers/index.js
+const { handleSensorData, handleBLEGateway, handleLoRaGateway, handleOTAResponse } = require('../mqtt');
 
 class MQTTService {
   constructor() {
     this.client = null;
     this.isConnected = false;
-    this.wsServer = null; // WebSocket server reference for real-time updates
+    // [PHASE 3 — WebSocket] uncomment when building the real-time frontend layer
+    this.wsServer = null;
   }
 
   /**
@@ -22,7 +34,7 @@ class MQTTService {
   connect() {
     return new Promise((resolve, reject) => {
       const connectUrl = `${config.mqtt.protocol}://${config.mqtt.host}:${config.mqtt.port}`;
-      
+
       const options = {
         username: config.mqtt.username,
         password: config.mqtt.password,
@@ -42,17 +54,17 @@ class MQTTService {
       this.client.on('connect', (connack) => {
         this.isConnected = true;
         logger.mqtt('Connected to HiveMQ Cloud broker', connack);
-        
+
         // Subscribe to topics
         this.subscribeToTopics();
-        
+
         resolve();
       });
 
       // Connection error
       this.client.on('error', (error) => {
         logger.error('MQTT connection error:', error);
-        
+
         // Log to database
         dbService.insertLog({
           level: 'error',
@@ -113,310 +125,38 @@ class MQTTService {
   }
 
   /**
-   * Handle incoming MQTT messages
+   * Route an incoming MQTT message to the correct handler.
+   * Each handler file owns one payload type — connection/routing stays here.
    */
   async handleMessage(topic, message) {
+    const messageStr = message.toString();
+
+    if (!isValidJSON(messageStr)) {
+      logger.warn(`[MQTT] Non-JSON message on ${topic} — dropped: ${messageStr.substring(0, 100)}`);
+      return;
+    }
+
+    const payload = JSON.parse(messageStr);
+    logger.mqtt(`Message on ${topic}`, { fields: Object.keys(payload) });
+
     try {
-      const messageStr = message.toString();
-      logger.mqtt(`Message received on ${topic}`, { preview: messageStr.substring(0, 100) });
-
-      // Parse message
-      if (!isValidJSON(messageStr)) {
-        logger.warn(`Invalid JSON message on ${topic}: ${messageStr}`);
-        return;
-      }
-
-      const payload = JSON.parse(messageStr);
-
-      // Route message based on topic
-      if (topic.startsWith('SensorData')) {
-        await this.handleSensorData(payload);
-      } else if (topic.startsWith('BLEGatewayData')) {
-        await this.handleGatewayData(payload);
-      } else if (topic.startsWith('LoRaGatewayData')) {
-        await this.handleLoRaGatewayData(payload);
-      } else if (topic.startsWith('OTA')) {
-        await this.handleOTAResponse(payload);
-      }
-
-      // Broadcast to WebSocket clients for real-time updates
-      this.broadcastToWebSocket({
-        type: 'mqtt_message',
-        topic,
-        payload,
-        timestamp: new Date().toISOString(),
-      });
-
+      if (topic.startsWith('SensorData')) await handleSensorData(payload);
+      else if (topic.startsWith('BLEGatewayData')) await handleBLEGateway(payload);
+      else if (topic.startsWith('LoRaGatewayData')) await handleLoRaGateway(payload);
+      else if (topic.startsWith('OTA')) await handleOTAResponse(payload);
+      else logger.warn(`[MQTT] No handler for topic: ${topic}`);
     } catch (error) {
-      logger.error(`Error handling message on ${topic}:`, error);
-      
+      logger.error(`[MQTT] Handler error on topic ${topic}:`, error);
       await dbService.insertLog({
         level: 'error',
         category: 'mqtt',
-        message: `Message processing error on ${topic}: ${error.message}`,
+        message: `Handler error on ${topic}: ${error.message}`,
         metadata: { topic, error: error.toString() },
       });
     }
-  }
 
-  /**
-   * Handle direct IoT device sensor data
-   */
-  async handleSensorData(payload) {
-    const { device_id, type, value } = payload;
-
-    if (!device_id) {
-      logger.warn('Sensor data missing device_id:', payload);
-      return;
-    }
-
-    try {
-      // Check if device exists, create if not (auto-registration)
-      let device = await dbService.getDeviceById(device_id);
-      
-      if (!device) {
-        logger.mqtt(`Auto-registering new device: ${device_id}`);
-        await dbService.insertDevice(device_id, device_id, 'active');
-        
-        await dbService.insertLog(
-          'device',
-          `New device auto-registered: ${device_id}`,
-          null,
-          device_id
-        );
-      } else {
-        // Update device status to online
-        await dbService.updateDeviceStatus(device_id, 'active');
-      }
-
-      // Prepare sensor data object
-      const sensorData = {};
-      if (type) sensorData.type = type;
-      if (value !== undefined) sensorData.value = value;
-      // Include any other fields from payload
-      Object.keys(payload).forEach(key => {
-        if (!['device_id', 'type', 'value'].includes(key)) {
-          sensorData[key] = payload[key];
-        }
-      });
-
-      // Insert sensor data (no gateway_id for direct devices)
-      await dbService.insertSensorData(
-        device_id,       // source_id
-        'device',        // source_type
-        null,            // gateway_id (Direct device, not via gateway)
-        sensorData,      // data object
-        new Date()       // timestamp
-      );
-
-      // Create log entry for device sensor data
-      await dbService.insertLog(
-        'device',
-        `Sensor data received from ${device_id}`,
-        JSON.stringify(payload),
-        device_id
-      );
-
-      logger.mqtt(`Sensor data stored for device ${device_id}`);
-
-    } catch (error) {
-      logger.error(`Error handling sensor data for ${device_id}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Handle LoRa gateway data (uses node_id as mac)
-   * Supports Air Quality, Wildlife Detection, and Environmental Monitoring
-   */
-  async handleLoRaGatewayData(payload) {
-    const { type, gateway_id, node_id } = payload;
-
-    if (!gateway_id || !node_id) {
-      logger.warn('LoRa gateway data missing gateway_id or node_id:', payload);
-      return;
-    }
-
-    // Use node_id as the MAC address for LoRa nodes
-    const mac = node_id;
-    const dataType = type || 'sensor'; // Default to 'sensor' if type not specified
-
-    try {
-      // Check if gateway exists, create if not (auto-registration)
-      let gateway = await dbService.getGatewayById(gateway_id);
-      
-      if (!gateway) {
-        logger.mqtt(`Auto-registering new LoRa gateway: ${gateway_id}`);
-        await dbService.insertGateway(gateway_id, gateway_id, 'active');
-        
-        await dbService.insertLog(
-          'gateway',
-          `New LoRa gateway auto-registered: ${gateway_id}`,
-          null,
-          gateway_id
-        );
-      } else {
-        // Update gateway status to online
-        await dbService.updateGatewayStatus(gateway_id, 'active');
-      }
-
-      // Check if node exists, create or update
-      let node = await dbService.getNodeByMac(mac);
-      
-      if (!node) {
-        const nodeName = `LoRa_${node_id}`;
-        logger.mqtt(`Auto-registering new LoRa node: ${nodeName}`);
-        await dbService.insertNode(gateway_id, mac, nodeName, payload.rssi_wifi || 0);
-      } else {
-        // Update node with latest RSSI
-        await dbService.updateNodeStatus(mac, gateway_id, payload.rssi_wifi || node.rssi);
-      }
-
-      // Prepare sensor data object - store ALL fields from payload
-      const sensorData = { ...payload };
-      
-      // Remove gateway_id and node_id as they're stored separately
-      delete sensorData.gateway_id;
-      delete sensorData.node_id;
-
-      // Insert sensor data
-      if (Object.keys(sensorData).length > 0) {
-        await dbService.insertSensorData(
-          mac,           // source_id (node_id)
-          'node',        // source_type
-          gateway_id,    // gateway_id
-          sensorData,    // data object (all fields preserved)
-          new Date()     // timestamp
-        );
-      }
-
-      // Log sensor data received
-      await dbService.insertLog(
-        'mqtt',
-        `LoRa sensor data from node ${node_id} via ${gateway_id}`,
-        JSON.stringify(sensorData),
-        mac
-      );
-
-      logger.mqtt(`LoRa data stored: ${gateway_id} -> ${node_id} (${Object.keys(sensorData).length} fields)`);
-
-    } catch (error) {
-      logger.error(`Error handling LoRa gateway data for ${gateway_id}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Handle gateway-node-based device data
-   */
-  async handleGatewayData(payload) {
-    const { gateway_id, beacon_name, mac, temperature, humidity, rssi } = payload;
-
-    if (!gateway_id || !mac) {
-      logger.warn('Gateway data missing gateway_id or mac:', payload);
-      return;
-    }
-
-    try {
-      // Check if gateway exists, create if not (auto-registration)
-      let gateway = await dbService.getGatewayById(gateway_id);
-      
-      if (!gateway) {
-        logger.mqtt(`Auto-registering new gateway: ${gateway_id}`);
-        await dbService.insertGateway(gateway_id, gateway_id, 'active');
-        
-        await dbService.insertLog(
-          'gateway',
-          `New gateway auto-registered: ${gateway_id}`,
-          null,
-          gateway_id
-        );
-      } else {
-        // Update gateway status to online
-        await dbService.updateGatewayStatus(gateway_id, 'active');
-      }
-
-      // Check if node exists, create or update
-      let node = await dbService.getNodeByMac(mac);
-      
-      if (!node) {
-        // Use MAC address as fallback name if beacon_name is empty
-        const nodeName = (beacon_name && beacon_name.trim() !== '') ? beacon_name.trim() : mac;
-        
-        logger.mqtt(`Auto-registering new node: ${nodeName} (${mac})`);
-        await dbService.insertNode(gateway_id, mac, nodeName, rssi || 0);
-      } else {
-        // Update node with latest RSSI
-        await dbService.updateNodeStatus(mac, gateway_id, rssi || node.rssi);
-      }
-
-      // Prepare sensor data object
-      const sensorData = {};
-      if (temperature !== undefined) sensorData.temperature = temperature;
-      if (humidity !== undefined) sensorData.humidity = humidity;
-      if (rssi !== undefined) sensorData.rssi = rssi;
-
-      // Insert sensor data
-      if (Object.keys(sensorData).length > 0) {
-        await dbService.insertSensorData(
-          mac,           // source_id
-          'node',        // source_type
-          gateway_id,    // gateway_id
-          sensorData,    // data object
-          new Date()     // timestamp
-        );
-      }
-
-      // Log sensor data received
-      await dbService.insertLog(
-        'mqtt',
-        `Sensor data received from ${beacon_name || mac} via ${gateway_id}`,
-        JSON.stringify({ temperature, humidity, rssi }),
-        mac
-      );
-
-      logger.mqtt(`Gateway data stored: ${gateway_id} -> ${beacon_name} (${mac})`);
-
-    } catch (error) {
-      logger.error(`Error handling gateway data for ${gateway_id}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Handle OTA response from devices
-   */
-  async handleOTAResponse(payload) {
-    const { device_id, status, firmware_version, error } = payload;
-
-    if (!device_id) {
-      logger.warn('OTA response missing device_id:', payload);
-      return;
-    }
-
-    try {
-      // Log OTA response
-      await dbService.insertLog({
-        level: status === 'success' ? 'info' : 'error',
-        category: 'ota',
-        source_id: device_id,
-        message: `OTA update ${status} for device ${device_id}`,
-        metadata: payload,
-      });
-
-      // Update device firmware version if successful
-      if (status === 'success' && firmware_version) {
-        await dbService.updateDevice(device_id, {
-          firmware_version,
-        });
-      }
-
-      logger.ota(`OTA response from ${device_id}: ${status}`);
-
-    } catch (error) {
-      logger.error(`Error handling OTA response for ${device_id}:`, error);
-      throw error;
-    }
+    // [PHASE 3 — broadcast to WebSocket clients]
+    this.broadcastToWebSocket({ type: 'mqtt_message', topic, payload, timestamp: new Date().toISOString() });
   }
 
   /**
@@ -512,25 +252,16 @@ class MQTTService {
     }
   }
 
-  /**
-   * Set WebSocket server for real-time broadcasting
-   */
+  // [PHASE 3 — WebSocket broadcasting]
   setWebSocketServer(wsServer) {
     this.wsServer = wsServer;
-    logger.ws('WebSocket server attached to MQTT service');
   }
-
-  /**
-   * Broadcast data to WebSocket clients
-   */
   broadcastToWebSocket(data) {
-    if (this.wsServer) {
-      this.wsServer.broadcast(data);
-    }
+    if (this.wsServer) this.wsServer.broadcast(data);
   }
 
   /**
-   * Check connection status
+   * Current MQTT connection info (used by GET /api/status)
    */
   getStatus() {
     return {

@@ -21,11 +21,11 @@ class MongoDBService {
     try {
       this.client = new MongoClient(config.database.mongodb.uri, config.database.mongodb.options);
       await this.client.connect();
-      
+
       // Get database name from URI or use default
       const dbName = new URL(config.database.mongodb.uri).pathname.slice(1) || 'blazeiot';
       this.db = this.client.db(dbName);
-      
+
       // Initialize collections
       this.collections = {
         users: this.db.collection('users'),
@@ -35,8 +35,11 @@ class MongoDBService {
         sensorData: this.db.collection('sensor_data'),
         commands: this.db.collection('commands'),
         otaUpdates: this.db.collection('ota_updates'),
+        otaFirmware: this.db.collection('ota_firmware'),
         systemLogs: this.db.collection('system_logs'),
         logs: this.db.collection('system_logs'), // Alias for systemLogs
+        alertProfiles: this.db.collection('alert_profiles'),
+        alerts: this.db.collection('alerts'),
       };
 
       await this.createIndexes();
@@ -85,10 +88,23 @@ class MongoDBService {
       await this.collections.otaUpdates.createIndex({ device_id: 1, created_at: -1 });
       await this.collections.otaUpdates.createIndex({ status: 1 });
 
+      // OTA firmware catalogue indexes
+      await this.collections.otaFirmware.createIndex({ created_at: -1 });
+      await this.collections.otaFirmware.createIndex({ device_type: 1, created_at: -1 });
+
       // System logs indexes
       await this.collections.systemLogs.createIndex({ timestamp: -1 });
       await this.collections.systemLogs.createIndex({ category: 1, timestamp: -1 });
       await this.collections.systemLogs.createIndex({ source_id: 1, timestamp: -1 });
+
+      // Alert profiles indexes
+      await this.collections.alertProfiles.createIndex({ profile_type: 1 }, { unique: true });
+
+      // Alerts indexes
+      await this.collections.alerts.createIndex({ timestamp: -1 });
+      await this.collections.alerts.createIndex({ source_id: 1, timestamp: -1 });
+      await this.collections.alerts.createIndex({ severity: 1, timestamp: -1 });
+      await this.collections.alerts.createIndex({ acknowledged: 1 });
 
       logger.db('MongoDB indexes created successfully');
     } catch (error) {
@@ -168,7 +184,7 @@ class MongoDBService {
   async updateDeviceStatus(device_id, status, last_seen = new Date()) {
     const result = await this.collections.devices.updateOne(
       { device_id },
-      { 
+      {
         $set: { status, last_seen },
         $setOnInsert: { created_at: new Date(), device_name: device_id }
       },
@@ -188,6 +204,14 @@ class MongoDBService {
 
   async getDeviceById(device_id) {
     return await this.collections.devices.findOne({ device_id });
+  }
+
+  async updateDevice(device_id, updateData) {
+    const result = await this.collections.devices.updateOne(
+      { device_id },
+      { $set: { ...updateData, updated_at: new Date() } }
+    );
+    return result.modifiedCount;
   }
 
   // ==================== GATEWAY METHODS ====================
@@ -211,7 +235,7 @@ class MongoDBService {
   async updateGatewayStatus(gateway_id, status, last_seen = new Date()) {
     const result = await this.collections.gateways.updateOne(
       { gateway_id },
-      { 
+      {
         $set: { status, last_seen },
         $setOnInsert: { created_at: new Date(), gateway_name: gateway_id }
       },
@@ -249,8 +273,8 @@ class MongoDBService {
   async insertNode(gateway_id, mac, node_name = null, rssi = null) {
     const result = await this.collections.nodes.updateOne(
       { mac, gateway_id },
-      { 
-        $set: { 
+      {
+        $set: {
           node_name: node_name || mac,
           rssi,
           last_seen: new Date()
@@ -265,7 +289,7 @@ class MongoDBService {
   async updateNodeStatus(mac, gateway_id, rssi = null) {
     const result = await this.collections.nodes.updateOne(
       { mac, gateway_id },
-      { 
+      {
         $set: { rssi, last_seen: new Date() },
         $setOnInsert: { created_at: new Date(), node_name: mac }
       },
@@ -296,6 +320,22 @@ class MongoDBService {
       .toArray();
   }
 
+  /**
+   * Update a node by MAC address (name, location, etc.)
+   */
+  async updateNode(mac, updateData) {
+    const update = { updated_at: new Date() };
+    if (updateData.name !== undefined) update.node_name = updateData.name;
+    if (updateData.latitude !== undefined) update.latitude = updateData.latitude;
+    if (updateData.longitude !== undefined) update.longitude = updateData.longitude;
+
+    const result = await this.collections.nodes.updateOne(
+      { mac },
+      { $set: update }
+    );
+    return result;
+  }
+
   // ==================== SENSOR DATA METHODS ====================
 
   async insertSensorData(source_id, source_type, gateway_id, data, timestamp = new Date()) {
@@ -319,17 +359,49 @@ class MongoDBService {
       .toArray();
   }
 
-  async getAllSensorData(limit = 100, offset = 0) {
+  // Alias used by device & node controllers
+  async getSensorData(source_id, limit = 100, offset = 0) {
+    return this.getSensorDataBySource(source_id, limit, offset);
+  }
+
+  async getLatestSensorData(source_id, type = null) {
+    const query = { source_id };
+    if (type) query['data.type'] = type;
+    return await this.collections.sensorData.findOne(query, { sort: { timestamp: -1 } });
+  }
+
+  async getSensorDataByTimeRange(source_id, startDate, endDate, limit = 1000) {
+    return await this.collections.sensorData
+      .find({
+        source_id,
+        timestamp: { $gte: new Date(startDate), $lte: new Date(endDate) },
+      })
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .toArray();
+  }
+
+  async getAllSensorData(limit = 100, offset = 0, startDate = null, endDate = null, deviceId = null, gatewayId = null) {
+    const queryObj = {};
+    if (deviceId) queryObj.source_id = deviceId;
+    if (gatewayId) queryObj.gateway_id = gatewayId;
+
+    if (startDate || endDate) {
+      queryObj.timestamp = {};
+      if (startDate) queryObj.timestamp.$gte = new Date(startDate);
+      if (endDate) queryObj.timestamp.$lte = new Date(endDate);
+    }
+
     const query = this.collections.sensorData
-      .find({})
+      .find(queryObj)
       .sort({ timestamp: -1 })
       .skip(offset);
-    
+
     // If limit is null or 0, don't apply limit (fetch all)
     if (limit && limit > 0) {
       query.limit(limit);
     }
-    
+
     return await query.toArray();
   }
 
@@ -358,12 +430,12 @@ class MongoDBService {
   async updateCommandStatus(id, status, response = null) {
     const result = await this.collections.commands.updateOne(
       { _id: new ObjectId(id) },
-      { 
-        $set: { 
-          status, 
+      {
+        $set: {
+          status,
           response,
           updated_at: new Date()
-        } 
+        }
       }
     );
     return result.modifiedCount;
@@ -430,6 +502,22 @@ class MongoDBService {
       .toArray();
   }
 
+  // Alias used by ota.controller
+  async getOTAHistory(device_id, limit = 100, offset = 0) {
+    return this.getOtaUpdatesByDevice(device_id, limit, offset);
+  }
+
+  // Record a push-initiated OTA attempt
+  async createOTAHistory(device_id, firmware_version) {
+    const result = await this.collections.otaUpdates.insertOne({
+      device_id,
+      firmware_version,
+      status: 'initiated',
+      created_at: new Date(),
+    });
+    return result.insertedId;
+  }
+
   async getAllOtaUpdates(limit = 100, offset = 0) {
     return await this.collections.otaUpdates
       .find({})
@@ -439,16 +527,46 @@ class MongoDBService {
       .toArray();
   }
 
+  // ==================== OTA FIRMWARE CATALOGUE ====================
+
+  async getAllFirmware(limit = 100, offset = 0) {
+    return await this.collections.otaFirmware
+      .find({})
+      .sort({ created_at: -1 })
+      .skip(offset)
+      .limit(limit)
+      .toArray();
+  }
+
+  async getLatestFirmware(device_type = null) {
+    const query = device_type ? { device_type } : {};
+    return await this.collections.otaFirmware.findOne(query, { sort: { created_at: -1 } });
+  }
+
+  async createFirmware(data) {
+    const result = await this.collections.otaFirmware.insertOne({
+      ...data,
+      created_at: new Date(),
+    });
+    return result.insertedId;
+  }
+
   // ==================== SYSTEM LOGS METHODS ====================
 
-  async insertLog(category, message, details = null, source_id = null) {
-    const result = await this.collections.systemLogs.insertOne({
-      category,
-      message,
-      details,
-      source_id,
-      timestamp: new Date(),
-    });
+  /**
+   * Accept two call signatures:
+   *   insertLog(category, message, details, source_id)   — positional (internal handlers)
+   *   insertLog({ level, category, message, metadata, source_id }) — object (mqtt service)
+   */
+  async insertLog(categoryOrObj, message = null, details = null, source_id = null) {
+    let doc;
+    if (typeof categoryOrObj === 'object' && categoryOrObj !== null) {
+      const { level = 'info', category, message: msg, metadata, source_id: sid } = categoryOrObj;
+      doc = { level, category, message: msg, details: metadata || null, source_id: sid || null, timestamp: new Date() };
+    } else {
+      doc = { level: 'info', category: categoryOrObj, message, details, source_id, timestamp: new Date() };
+    }
+    const result = await this.collections.systemLogs.insertOne(doc);
     return result.insertedId;
   }
 
@@ -457,19 +575,19 @@ class MongoDBService {
       .find({ category })
       .sort({ timestamp: -1 })
       .skip(offset);
-    
+
     // If limit is null or 0, don't apply limit (fetch all)
     if (limit && limit > 0) {
       query.limit(limit);
     }
-    
+
     return await query.toArray();
   }
 
   async getAllLogs(limit = 100, offset = 0) {
     // Always enforce a limit to prevent memory issues
     const safeLimit = Math.min(Math.max(limit || 100, 1), 10000);
-    
+
     return await this.collections.logs
       .find({})
       .sort({ timestamp: -1 })
@@ -504,8 +622,8 @@ class MongoDBService {
       this.collections.gateways.countDocuments({}),
       this.collections.gateways.countDocuments({ status: 'active' }),
       this.collections.nodes.countDocuments({}),
-      this.collections.nodes.countDocuments({ 
-        last_seen: { $gte: new Date(Date.now() - 5 * 60 * 1000) } 
+      this.collections.nodes.countDocuments({
+        last_seen: { $gte: new Date(Date.now() - 5 * 60 * 1000) }
       }),
       this.collections.sensorData.countDocuments({})
     ]);

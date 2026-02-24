@@ -56,14 +56,12 @@ const logger = winston.createLogger({
   ],
 });
 
-// Add console transport in development
-if (config.server.env !== 'production') {
-  logger.add(
-    new winston.transports.Console({
-      format: consoleFormat,
-    })
-  );
-}
+// Always log to console — visibility during development and useful in any deployment
+logger.add(
+  new winston.transports.Console({
+    format: consoleFormat,
+  }),
+);
 
 // Helper methods for different log types
 logger.mqtt = (message, meta = {}) => {

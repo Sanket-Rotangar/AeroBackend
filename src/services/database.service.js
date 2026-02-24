@@ -1,13 +1,8 @@
 /**
  * BlazeIoT Solutions - Database Service
- * Routes to MongoDB service
+ * Single source of truth for all DB operations — MongoDB only.
+ * This file exists as an import alias so routes and services always import
+ * from 'database.service' rather than the concrete implementation directly.
  */
 
-const config = require('../config/config');
-
-// Route to MongoDB service
-if (config.database.type === 'mongodb') {
-  module.exports = require('./database.mongodb.service');
-} else {
-  throw new Error(`Unsupported database type: ${config.database.type}. Only MongoDB is supported.`);
-}
+module.exports = require('./database.mongodb.service');

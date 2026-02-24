@@ -19,7 +19,7 @@ class WebSocketService {
    * Initialize WebSocket server
    */
   initialize(server) {
-    this.wss = new WebSocket.Server({ 
+    this.wss = new WebSocket.Server({
       server,
       path: '/ws',
     });
@@ -36,7 +36,7 @@ class WebSocketService {
    */
   handleConnection(ws, req) {
     const clientId = this.generateClientId();
-    
+
     // Parse query parameters for authentication
     const query = url.parse(req.url, true).query;
     const token = query.token;
@@ -52,7 +52,7 @@ class WebSocketService {
 
     try {
       const user = authService.verifyToken(token);
-      
+
       // Store authenticated client
       this.clients.set(clientId, {
         ws,
@@ -113,16 +113,16 @@ class WebSocketService {
         case 'ping':
           this.sendToClient(clientId, { type: 'pong', timestamp: new Date().toISOString() });
           break;
-        
+
         case 'subscribe':
           // Client can subscribe to specific data streams
           this.handleSubscribe(clientId, data.channel);
           break;
-        
+
         case 'unsubscribe':
           this.handleUnsubscribe(clientId, data.channel);
           break;
-        
+
         default:
           logger.ws(`Unknown message type from ${clientId}: ${data.type}`);
       }
@@ -142,7 +142,7 @@ class WebSocketService {
       }
       client.subscriptions.add(channel);
       logger.ws(`Client ${clientId} subscribed to ${channel}`);
-      
+
       this.sendToClient(clientId, {
         type: 'subscribed',
         channel,
@@ -159,7 +159,7 @@ class WebSocketService {
     if (client && client.subscriptions) {
       client.subscriptions.delete(channel);
       logger.ws(`Client ${clientId} unsubscribed from ${channel}`);
-      
+
       this.sendToClient(clientId, {
         type: 'unsubscribed',
         channel,
@@ -229,16 +229,16 @@ class WebSocketService {
   }
 
   /**
-   * Send device status update
+   * Send node status update
    */
-  broadcastDeviceStatus(device_id, status, data = {}) {
+  broadcastNodeStatus(mac, status, data = {}) {
     this.broadcast({
-      type: 'device_status',
-      device_id,
+      type: 'node_status',
+      mac,
       status,
       data,
       timestamp: new Date().toISOString(),
-    }, 'devices');
+    }, 'nodes');
   }
 
   /**
@@ -322,7 +322,7 @@ class WebSocketService {
         client.ws.close(1000, 'Server shutting down');
       });
       this.clients.clear();
-      
+
       this.wss.close(() => {
         logger.ws('WebSocket server closed');
       });
