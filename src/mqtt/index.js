@@ -13,6 +13,7 @@
 
 const dbService = require('../services/database.service');
 const alertService = require('../services/alert.service');
+const wsService = require('../services/websocket.service');
 const logger = require('../utils/logger');
 
 // ─────────────────────────────────────────────────────────────
@@ -38,6 +39,8 @@ async function handleSensorData(payload) {
 
   if (Object.keys(sensorData).length > 0) {
     await dbService.insertSensorData(device_id, 'device', null, sensorData, new Date());
+    // Broadcast to WebSocket clients so dashboards update live
+    wsService.broadcastSensorData('device', device_id, sensorData);
   }
 
   logger.mqtt(`[SensorData] Stored ${Object.keys(sensorData).length} fields from device: ${device_id}`);
@@ -82,6 +85,8 @@ async function handleBLEGateway(payload) {
 
   if (Object.keys(sensorData).length > 0) {
     await dbService.insertSensorData(mac, 'node', gateway_id, sensorData, new Date());
+    // Broadcast to WebSocket clients so dashboards update live
+    wsService.broadcastSensorData('node', mac, sensorData);
     // Evaluate against alert thresholds
     await alertService.evaluateData(mac, gateway_id, sensorData);
   }
@@ -126,6 +131,8 @@ async function handleLoRaGateway(payload) {
   const sensorData = { ...rest };
   if (Object.keys(sensorData).length > 0) {
     await dbService.insertSensorData(mac, 'node', gateway_id, sensorData, new Date());
+    // Broadcast to WebSocket clients so dashboards update live
+    wsService.broadcastSensorData('node', mac, sensorData);
     // Evaluate against alert thresholds
     await alertService.evaluateData(mac, gateway_id, sensorData);
   }
